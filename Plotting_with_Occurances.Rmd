@@ -1,0 +1,234 @@
+---
+title: "Plotting with Occurances"
+author: "Craig O'Neill"
+date: "November 13, 2018"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(raster)
+library(tidyverse)
+library(dismo)
+```
+
+
+Purpose of this script is to plot our prediction maps with the occurance records.
+
+##Adults Ticks Only!
+
+Data Input:
+```{r, include=FALSE}
+AnnOcc <- read.csv("Data/CollectionData/Adults/Ipac_pres_NAD83_annual_Adults.csv")
+AnnOcc <- AnnOcc %>% 
+  select(longitude, latitude)
+
+Jan <- read.csv("Data/Adults/SWD/JanuaryOCC.csv")
+colnames(Jan) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Feb <- read.csv("Data/Adults/SWD/FebruaryOCC.csv")
+colnames(Feb) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Mar <- read.csv("Data/Adults/SWD/MarchOCC.csv")
+colnames(Mar) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Apr <- read.csv("Data/Adults/SWD/AprilOCC.csv")
+colnames(Apr) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+May <- read.csv("Data/Adults/SWD/MayOCC.csv")
+colnames(May) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Jun <- read.csv("Data/Adults/SWD/JuneOCC.csv")
+colnames(Jun) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Jul <- read.csv("Data/Adults/SWD/JulyOCC.csv")
+colnames(Jul) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+#No August Records
+#Aug <- read.csv("Data/Adults/SWD/AugustOCC.csv")
+#colnames(Aug) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+#No Sept Records
+#Sep <- read.csv("Data/Adults/SWD/SeptemberOCC.csv")
+#colnames(Sep) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Oct <- read.csv("Data/Adults/SWD/OctoberOCC.csv")
+colnames(Oct) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Nov <- read.csv("Data/Adults/SWD/NovemberOCC.csv")
+colnames(Nov) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Dec <- read.csv("Data/Adults/SWD/DecemberOCC.csv")
+colnames(Dec) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+AnnPred <- raster("Results/Adults/AnnualModel5Final/Predictions/Annual.tif")
+
+JanPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/01Jan.tif")
+FebPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/02Feb.tif")
+MarPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/03Mar.tif")
+AprPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/04Apr.tif")
+MayPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/05May.tif")
+JunPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/06Jun.tif")
+JulPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/07Jul.tif")
+AugPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/08Aug.tif")
+SepPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/09Sep.tif")
+OctPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/10Oct.tif")
+NovPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/11Nov.tif")
+DecPred <- raster("Results/Adults/SeasonalModel5_final/Predictions/12Dec.tif")
+
+```
+
+Plot:
+```{r}
+plot(AnnPred, main="Annual Adult Tick Prediction Map")
+points(AnnOcc$longitude, AnnOcc$latitude, col="black", pch=20, cex=0.75)
+
+plot(JanPred, main="Seasonal Adult Tick Prediction Map - January")
+points(Jan$longitude, Jan$latitude, col="black", pch=20, cex=0.75)
+
+plot(FebPred, main="Seasonal Adult Tick Prediction Map - February")
+points(Feb$longitude, Feb$latitude, col="black", pch=20, cex=0.75)
+
+plot(MarPred, main="Seasonal Adult Tick Prediction Map - March")
+points(Mar$longitude, Mar$latitude, col="black", pch=20, cex=0.75)
+
+plot(AprPred, main="Seasonal Adult Tick Prediction Map - April")
+points(Apr$longitude, Apr$latitude, col="black", pch=20, cex=0.75)
+
+plot(MayPred, main="Seasonal Adult Tick Prediction Map - May")
+points(May$longitude, May$latitude, col="black", pch=20, cex=0.75)
+
+plot(JunPred, main="Seasonal Adult Tick Prediction Map - June")
+points(Jun$longitude, Jun$latitude, col="black", pch=20, cex=0.75)
+
+plot(JulPred, main="Seasonal Adult Tick Prediction Map - July")
+points(Jul$longitude, Jul$latitude, col="black", pch=20, cex=0.75)
+
+#No august occ
+#plot(AugPred, main="Seasonal Adult Tick Prediction Map - August")
+#points(Aug$longitude, Aug$latitude, col="black", pch=20, cex=0.75)
+
+#No Sept occ
+#plot(SepPred, main="Seasonal Adult Tick Prediction Map - September")
+#points(Sep$longitude, Sep$latitude, col="black", pch=20, cex=0.75)
+
+plot(OctPred, main="Seasonal Adult Tick Prediction Map - October")
+points(Oct$longitude, Oct$latitude, col="black", pch=20, cex=0.75)
+
+plot(NovPred, main="Seasonal Adult Tick Prediction Map - November")
+points(Nov$longitude, Nov$latitude, col="black", pch=20, cex=0.75)
+
+plot(DecPred, main="Seasonal Adult Tick Prediction Map - December")
+points(Dec$longitude, Dec$latitude, col="black", pch=20, cex=0.75)
+```
+
+
+##Nymph Results
+Data Input:
+```{r, include=FALSE}
+AnnOcc <- read.csv("Data/CollectionData/Nymphs/Ipac_pres_NAD83_annual_Nymphs.csv")
+AnnOcc <- AnnOcc %>% 
+  select(longitude, latitude)
+
+Jan <- read.csv("Data/Nymphs/SWD/JanuaryOCC.csv")
+colnames(Jan) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Feb <- read.csv("Data/Nymphs/SWD/FebruaryOCC.csv")
+colnames(Feb) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Mar <- read.csv("Data/Nymphs/SWD/MarchOCC.csv")
+colnames(Mar) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Apr <- read.csv("Data/Nymphs/SWD/AprilOCC.csv")
+colnames(Apr) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+May <- read.csv("Data/Nymphs/SWD/MayOCC.csv")
+colnames(May) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Jun <- read.csv("Data/Nymphs/SWD/JuneOCC.csv")
+colnames(Jun) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Jul <- read.csv("Data/Nymphs/SWD/JulyOCC.csv")
+colnames(Jul) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Aug <- read.csv("Data/Nymphs/SWD/AugustOCC.csv")
+colnames(Aug) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Sep <- read.csv("Data/Nymphs/SWD/SeptemberOCC.csv")
+colnames(Sep) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Oct <- read.csv("Data/Nymphs/SWD/OctoberOCC.csv")
+colnames(Oct) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+#No November occ
+#Nov <- read.csv("Data/Nymphs/SWD/NovemberOCC.csv")
+#colnames(Nov) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Dec <- read.csv("Data/Nymphs/SWD/DecemberOCC.csv")
+colnames(Dec) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+AnnPred <- raster("Results/Nymphs/AnnualModel5Final/Predictions/Annual.tif")
+
+JanPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/01Jan.tif")
+FebPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/02Feb.tif")
+MarPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/03Mar.tif")
+AprPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/04Apr.tif")
+MayPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/05May.tif")
+JunPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/06Jun.tif")
+JulPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/07Jul.tif")
+AugPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/08Aug.tif")
+SepPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/09Sep.tif")
+OctPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/10Oct.tif")
+NovPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/11Nov.tif")
+DecPred <- raster("Results/Nymphs/SeasonalModel5_final/Predictions/12Dec.tif")
+
+```
+
+##Plotting
+```{r}
+plot(AnnPred, main="Annual Nymph Tick Prediction Map")
+points(AnnOcc$longitude, AnnOcc$latitude, col="black", pch=20, cex=0.75)
+
+plot(JanPred, main="Seasonal Nymph Tick Prediction Map - January")
+points(Jan$longitude, Jan$latitude, col="black", pch=20, cex=0.75)
+
+plot(FebPred, main="Seasonal Nymph Tick Prediction Map - February")
+points(Feb$longitude, Feb$latitude, col="black", pch=20, cex=0.75)
+
+plot(MarPred, main="Seasonal Nymph Tick Prediction Map - March")
+points(Mar$longitude, Mar$latitude, col="black", pch=20, cex=0.75)
+
+plot(AprPred, main="Seasonal Nymph Tick Prediction Map - April")
+points(Apr$longitude, Apr$latitude, col="black", pch=20, cex=0.75)
+
+plot(MayPred, main="Seasonal Nymph Tick Prediction Map - May")
+points(May$longitude, May$latitude, col="black", pch=20, cex=0.75)
+
+plot(JunPred, main="Seasonal Nymph Tick Prediction Map - June")
+points(Jun$longitude, Jun$latitude, col="black", pch=20, cex=0.75)
+
+plot(JulPred, main="Seasonal Nymph Tick Prediction Map - July")
+points(Jul$longitude, Jul$latitude, col="black", pch=20, cex=0.75)
+
+plot(AugPred, main="Seasonal Nymph Tick Prediction Map - August")
+points(Aug$longitude, Aug$latitude, col="black", pch=20, cex=0.75)
+
+plot(SepPred, main="Seasonal Nymph Tick Prediction Map - September")
+points(Sep$longitude, Sep$latitude, col="black", pch=20, cex=0.75)
+
+plot(OctPred, main="Seasonal Nymph Tick Prediction Map - October")
+points(Oct$longitude, Oct$latitude, col="black", pch=20, cex=0.75)
+
+#No November
+#plot(NovPred, main="Seasonal Nymph Tick Prediction Map - November")
+#points(Nov$longitude, Nov$latitude, col="black", pch=20, cex=0.75)
+
+plot(DecPred, main="Seasonal Nymph Tick Prediction Map - December")
+points(Dec$longitude, Dec$latitude, col="black", pch=20, cex=0.75)
+```
+

@@ -1,0 +1,1987 @@
+---
+title: "Tickmodelling Scripts"
+author: "Craig O'Neill"
+date: "August 29, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Libraries
+
+```{r}
+library(ENMeval)
+library(tidyverse)
+library(dismo)
+library(rJava)
+
+
+```
+
+##Preforming ENMeval
+
+ENMeval was used to test Regularization and Maxent Features.  This is a way to tune the model productively and methodically.  The goal is to maximize predictive capabilities, while minimizing overfitting/complexity.
+
+Due to ENMeval's limitation of not permitting SWD inputs, only the annual model was fitted using this program.  SWD is necessary to preform the Seasonal Model.
+
+##ENMeval 1:  Data Inputs
+
+```{r}
+#Data Inputs
+
+Occurance <- read.csv("Data/CollectionData/Adults/Ipac_pres_NAD83_annual_Adults.csv")
+OccAnn <- Occurance %>% 
+  select(longitude, latitude)
+OccAnn <- OccAnn[!duplicated(OccAnn),]
+
+
+envAnnual <- raster::stack("Data/BCMSnapAnnual90/aet_90m.tif",
+                         "Data/BCMSnapAnnual90/cwd_90m.tif",
+                         "Data/BCMSnapAnnual90/ppt_90m.tif",
+                         "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                         #"Data/BCMSnapAnnual90/pptjja_90m.tif",
+                         #"Data/BCMSnapAnnual90/tmn_90m.tif",
+                         "Data/BCMSnapAnnual90/tmndjf_90m.tif",
+                         "Data/BCMSnapAnnual90/tmx_90m.tif",
+                         "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                         "Data/fveg90/fvegHW90mask.tif")
+                         #"Data/BioDSnap90/bird90.tif",
+                         #"Data/BioDSnap90/mammal90.tif",
+                         #"Data/BioDSnap90/reptile90.tif")
+
+AET <- raster("Data/BCMSnapAnnual90/aet_90m.tif")
+envAnn <- mask(envAnnual, AET)
+envAnn$fvegHW90mask[envAnn$fvegHW90mask < 0] <- NA
+names(envAnn) <- c("aet", "cwd", "ppt", "pptdjf", "tmndjf", "tmx", "tmxjja", "fveg")
+
+
+```
+
+##ENMeval 2:  Adjusting the Details of the Test Run
+
+```{r}
+#Name Categorical Raster Layers
+categorical <- "fveg" 
+
+#Set Regularization Values to test for
+RM <- c("0.5", "1.0", "1.5", "2.0")
+
+#Set Features to Test for (L = Linear, P = Product, Q = Quadratic, T = Threshold, H = Hinge)
+Features <- c("LQP", "LQPT", "LQPTH")
+
+#Set Background Points
+bg <- 18000
+
+#Set testing method
+meth <- "randomkfold"
+
+#Set KFolds (for testing method that requires it)
+kf <- 5
+
+#Some other options
+rasterPred <- TRUE
+progbar <- TRUE
+numCores <- 4
+
+#SetRData  Save Location 
+saveloc <- "Results/Adults/ENMevaltest.rData"
+```
+
+##ENMeval 3:  Running the Testing Model
+
+```{r}
+
+ENMAnn <- ENMevaluate(OccAnn,
+                           envAnn,
+                        #bg.coords = bg,
+                           RMvalues = RM,
+                           fc = Features,
+                           categoricals = categorical,
+                           n.bg = bg, 
+                           method = meth, 
+                           kfolds = kf, 
+                           rasterPreds = rasterPred, 
+                           progbar = progbar, 
+                           updateProgress = TRUE,
+                           numCores = numCores
+                           )
+
+save(ENMAnn, file = "Results/Adults/18-11-18ENMeval.rData")
+```
+
+##ENMeval 4:  Looking at the Results
+
+```{r}
+results <- ENMAnn@results #Dataframe of results parameters, AUC, AIC, featureclasses and regularized multiplier
+model1 <- ENMAnn[[1]] #extract a single Maxent File for the 1st model of the ENM run
+
+write.csv(results, file = "Results/ENMtable181129.csv")
+
+overlap <- calc.niche.overlap(ENMAnn@predictions, stat = "D")
+```
+
+##Extraction
+To build the Seasonal Model we needed to use Maxen't Samples with Data (SWD) function.  This method allows us to extract environmental variables that correspond with specific date of occurance.  For example:  a tick observation #1 at Location A found in December will have the December environmental variables (December's ppt, for example), while tick observation #2, also found at Location B but in the month of June will have very different environmental variables (probably much less ppt compared to December) without Samples with Data we would be unable to preform this analysis.
+
+To get the data for SWD we need to extract the environmental variables from our rasters.
+
+##Extraction 1:  Annual Extraction
+(This was done by Andy, I don't have a script for it, but can make one pretty easy)
+
+```{r}
+AnnEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapAnnual90/aet_90m.tif",
+                       "Data/BCMSnapAnnual90/cwd_90m.tif",
+                       "Data/BCMSnapAnnual90/ppt_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmn_90m.tif",
+                       "Data/BCMSnapAnnual90/tmx_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+AnnOcc <- read.csv("Data/CollectionData/Ipac_pres_NAD83_annual.csv")
+AnnOcc <- AnnOcc %>% 
+  select(longitude, latitude)
+
+AnnExtract <- raster::extract(AnnEnv, AnnOcc, method='simple')
+AnnExtract <- as.data.frame(AnnExtract)
+
+AnnExtract$longitude <- AnnOcc$longitude
+AnnExtract$latitude <- AnnOcc$latitude
+
+write.csv(AnnExtract, file = "Data/SWD/AnnOCCswda.csv")
+
+
+
+```
+
+
+##Extraction 2:  Annual:  Background Extraction
+
+```{r}
+
+AnnBack <- read.csv("Data/Background/Annual_Background_MaxentSWD.csv")
+AnnBack <- AnnBack %>%
+  select(longitude, latitude)
+
+
+AnnBackExtract <- raster::extract(AnnEnv, AnnBack, method='simple')
+AnnBackExtract <- as.data.frame(AnnBackExtract)
+
+AnnBackExtract$longitude <- AnnBack$longitude
+AnnBackExtract$latitude <- AnnBack$latitude
+
+write.csv(AnnBackExtract, file = "Data/SWD/AnnBackswd.csv")
+
+```
+
+
+##Extraction 3:  Seasonal:  Occurance Extraction
+
+```{r}
+
+#January
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetjan_90m.tif",
+                       "Data/BCMSnapMonth90/cwdjan_90m.tif",
+                       "Data/BCMSnapMonth90/pptjan_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnjan_90m.tif",
+                       "Data/BCMSnapMonth90/tmxjan_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/Jan_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/JanuaryOCC.csv")
+
+##February
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetfeb_90m.tif",
+                       "Data/BCMSnapMonth90/cwdfeb_90m.tif",
+                       "Data/BCMSnapMonth90/pptfeb_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnfeb_90m.tif",
+                       "Data/BCMSnapMonth90/tmxfeb_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/Feb_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/FebruaryOCC.csv")
+
+##March
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetmar_90m.tif",
+                       "Data/BCMSnapMonth90/cwdmar_90m.tif",
+                       "Data/BCMSnapMonth90/pptmar_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnmar_90m.tif",
+                       "Data/BCMSnapMonth90/tmxmar_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/Mar_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/MarchOCC.csv")
+
+
+##April
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetapr_90m.tif",
+                       "Data/BCMSnapMonth90/cwdapr_90m.tif",
+                       "Data/BCMSnapMonth90/pptapr_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnapr_90m.tif",
+                       "Data/BCMSnapMonth90/tmxapr_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/Apr_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/AprilOCC.csv")
+
+##May
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetmay_90m.tif",
+                       "Data/BCMSnapMonth90/cwdmay_90m.tif",
+                       "Data/BCMSnapMonth90/pptmay_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnmay_90m.tif",
+                       "Data/BCMSnapMonth90/tmxmay_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/May_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/MayOCC.csv")
+
+
+##June
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetjun_90m.tif",
+                       "Data/BCMSnapMonth90/cwdjun_90m.tif",
+                       "Data/BCMSnapMonth90/pptjun_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnjun_90m.tif",
+                       "Data/BCMSnapMonth90/tmxjun_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/Jun_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/JuneOCC.csv")
+
+
+##July
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetjul_90m.tif",
+                       "Data/BCMSnapMonth90/cwdjul_90m.tif",
+                       "Data/BCMSnapMonth90/pptjul_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnjul_90m.tif",
+                       "Data/BCMSnapMonth90/tmxjul_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/Jul_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/JulyOCC.csv")
+
+##August
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetaug_90m.tif",
+                       "Data/BCMSnapMonth90/cwdaug_90m.tif",
+                       "Data/BCMSnapMonth90/pptaug_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnaug_90m.tif",
+                       "Data/BCMSnapMonth90/tmxaug_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/Aug_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/AugustOCC.csv")
+
+
+##September
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetsep_90m.tif",
+                       "Data/BCMSnapMonth90/cwdsep_90m.tif",
+                       "Data/BCMSnapMonth90/pptsep_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnsep_90m.tif",
+                       "Data/BCMSnapMonth90/tmxsep_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/Sep_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/SeptemberOCC.csv")
+
+
+##October
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetoct_90m.tif",
+                       "Data/BCMSnapMonth90/cwdoct_90m.tif",
+                       "Data/BCMSnapMonth90/pptoct_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnoct_90m.tif",
+                       "Data/BCMSnapMonth90/tmxoct_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/Oct_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/OctoberOCC.csv")
+
+
+##November
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetnov_90m.tif",
+                       "Data/BCMSnapMonth90/cwdnov_90m.tif",
+                       "Data/BCMSnapMonth90/pptnov_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnnov_90m.tif",
+                       "Data/BCMSnapMonth90/tmxnov_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/Nov_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/NovemberOCC.csv")
+
+
+##December
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetdec_90m.tif",
+                       "Data/BCMSnapMonth90/cwddec_90m.tif",
+                       "Data/BCMSnapMonth90/pptdec_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmndec_90m.tif",
+                       "Data/BCMSnapMonth90/tmxdec_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+MonthOcc <- read.csv("Data/CollectionData/Dec_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+MonthExtract <- raster::extract(MonthEnv, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+
+write.csv(MonthExtract, file = "Data/SWD/DecemberOCC.csv")
+```
+
+##Extraction 4:  Seasonal:  Background Extraction
+
+```{r}
+#January
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="January") %>% 
+  select(longitude, latitude)
+
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetjan_90m.tif",
+                       "Data/BCMSnapMonth90/cwdjan_90m.tif",
+                       "Data/BCMSnapMonth90/pptjan_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnjan_90m.tif",
+                       "Data/BCMSnapMonth90/tmxjan_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+Month01Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month01Extract <- as.data.frame(Month01Extract)
+
+Month01Extract$longitude <- MonthBack$longitude
+Month01Extract$latitude <- MonthBack$latitude
+
+
+#February
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="February") %>% 
+  select(longitude, latitude)
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetfeb_90m.tif",
+                       "Data/BCMSnapMonth90/cwdfeb_90m.tif",
+                       "Data/BCMSnapMonth90/pptfeb_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnfeb_90m.tif",
+                       "Data/BCMSnapMonth90/tmxfeb_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+
+Month02Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month02Extract <- as.data.frame(Month02Extract)
+
+Month02Extract$longitude <- MonthBack$longitude
+Month02Extract$latitude <- MonthBack$latitude
+
+
+#March
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="March") %>% 
+  select(longitude, latitude)
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetmar_90m.tif",
+                       "Data/BCMSnapMonth90/cwdmar_90m.tif",
+                       "Data/BCMSnapMonth90/pptmar_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnmar_90m.tif",
+                       "Data/BCMSnapMonth90/tmxmar_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+
+Month03Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month03Extract <- as.data.frame(Month03Extract)
+
+Month03Extract$longitude <- MonthBack$longitude
+Month03Extract$latitude <- MonthBack$latitude
+
+
+#April
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="April") %>% 
+  select(longitude, latitude)
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetapr_90m.tif",
+                       "Data/BCMSnapMonth90/cwdapr_90m.tif",
+                       "Data/BCMSnapMonth90/pptapr_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnapr_90m.tif",
+                       "Data/BCMSnapMonth90/tmxapr_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+
+Month04Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month04Extract <- as.data.frame(Month04Extract)
+
+Month04Extract$longitude <- MonthBack$longitude
+Month04Extract$latitude <- MonthBack$latitude
+
+
+#May
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="May") %>% 
+  select(longitude, latitude)
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetmay_90m.tif",
+                       "Data/BCMSnapMonth90/cwdmay_90m.tif",
+                       "Data/BCMSnapMonth90/pptmay_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnmay_90m.tif",
+                       "Data/BCMSnapMonth90/tmxmay_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+
+Month05Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month05Extract <- as.data.frame(Month05Extract)
+
+Month05Extract$longitude <- MonthBack$longitude
+Month05Extract$latitude <- MonthBack$latitude
+
+
+#June
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="June") %>% 
+  select(longitude, latitude)
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetjun_90m.tif",
+                       "Data/BCMSnapMonth90/cwdjun_90m.tif",
+                       "Data/BCMSnapMonth90/pptjun_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnjun_90m.tif",
+                       "Data/BCMSnapMonth90/tmxjun_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+Month06Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month06Extract <- as.data.frame(Month06Extract)
+
+Month06Extract$longitude <- MonthBack$longitude
+Month06Extract$latitude <- MonthBack$latitude
+
+
+#July
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="July") %>% 
+  select(longitude, latitude)
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetjul_90m.tif",
+                       "Data/BCMSnapMonth90/cwdjul_90m.tif",
+                       "Data/BCMSnapMonth90/pptjul_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnjul_90m.tif",
+                       "Data/BCMSnapMonth90/tmxjul_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+
+Month07Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month07Extract <- as.data.frame(Month07Extract)
+
+Month07Extract$longitude <- MonthBack$longitude
+Month07Extract$latitude <- MonthBack$latitude
+
+
+#August
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="August") %>% 
+  select(longitude, latitude)
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetaug_90m.tif",
+                       "Data/BCMSnapMonth90/cwdaug_90m.tif",
+                       "Data/BCMSnapMonth90/pptaug_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnaug_90m.tif",
+                       "Data/BCMSnapMonth90/tmxaug_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+Month08Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month08Extract <- as.data.frame(Month08Extract)
+
+Month08Extract$longitude <- MonthBack$longitude
+Month08Extract$latitude <- MonthBack$latitude
+
+
+
+#September
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="September") %>% 
+  select(longitude, latitude)
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetsep_90m.tif",
+                       "Data/BCMSnapMonth90/cwdsep_90m.tif",
+                       "Data/BCMSnapMonth90/pptsep_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnsep_90m.tif",
+                       "Data/BCMSnapMonth90/tmxsep_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+Month09Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month09Extract <- as.data.frame(Month09Extract)
+
+Month09Extract$longitude <- MonthBack$longitude
+Month09Extract$latitude <- MonthBack$latitude
+
+
+#October
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="October") %>% 
+  select(longitude, latitude)
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetoct_90m.tif",
+                       "Data/BCMSnapMonth90/cwdoct_90m.tif",
+                       "Data/BCMSnapMonth90/pptoct_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnoct_90m.tif",
+                       "Data/BCMSnapMonth90/tmxoct_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+
+Month10Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month10Extract <- as.data.frame(Month10Extract)
+
+Month10Extract$longitude <- MonthBack$longitude
+Month10Extract$latitude <- MonthBack$latitude
+
+
+#November
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="November") %>% 
+  select(longitude, latitude)
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetnov_90m.tif",
+                       "Data/BCMSnapMonth90/cwdnov_90m.tif",
+                       "Data/BCMSnapMonth90/pptnov_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnnov_90m.tif",
+                       "Data/BCMSnapMonth90/tmxnov_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+
+Month11Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month11Extract <- as.data.frame(Month11Extract)
+
+Month11Extract$longitude <- MonthBack$longitude
+Month11Extract$latitude <- MonthBack$latitude
+
+
+#December
+
+MonthBack <- read.csv("Data/Background/Random_Background_Locations.csv")
+MonthBack <- MonthBack %>%
+  subset(Month=="December") %>% 
+  select(longitude, latitude)
+
+MonthEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetdec_90m.tif",
+                       "Data/BCMSnapMonth90/cwddec_90m.tif",
+                       "Data/BCMSnapMonth90/pptdec_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmndec_90m.tif",
+                       "Data/BCMSnapMonth90/tmxdec_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+
+Month12Extract <- raster::extract(MonthEnv, MonthBack, method='simple')
+Month12Extract <- as.data.frame(Month12Extract)
+
+Month12Extract$longitude <- MonthBack$longitude
+Month12Extract$latitude <- MonthBack$latitude
+
+
+##Combining the Monthly Dataframes
+
+colnames(Month01Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+colnames(Month02Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+colnames(Month03Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+colnames(Month04Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+colnames(Month05Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+colnames(Month06Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+colnames(Month07Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+colnames(Month08Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+colnames(Month09Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+colnames(Month10Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+colnames(Month11Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+colnames(Month12Extract) <-c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+
+
+BackgroundSWD <- rbind(Month01Extract, Month02Extract, Month03Extract, Month04Extract, Month05Extract, Month06Extract, Month07Extract, Month08Extract, Month09Extract, Month10Extract, Month11Extract, Month12Extract)
+
+write.csv(BackgroundSWD, file = "Data/SWD/BackgroundSWD.csv")
+```
+
+
+##Annual Model Construction
+After using ENMeval to test how various features/regularizations affected the model (in terms of the tradeoff between predictiveness and complexity and overfitting), we can next construct a final Annual Model.  We could have also just extracted the best model from our ENM results, but this is a way to build the model on its own using SWD.
+
+##Annual Model 1:  Data Inputs
+Same data inputs as using in the ENMeval steps, repeated below.
+```{r}
+Occurance <- read.csv("Data/SWD/AnnBackswd.csv")
+OccAnn <- Occurance %>% 
+  select(longitude, latitude)
+OccAnn <- OccAnn[!duplicated(OccAnn),]
+
+
+envAnnual <- raster::stack("Data/BCMSnapAnnual90/aet_90m.tif",
+                         "Data/BCMSnapAnnual90/cwd_90m.tif",
+                         "Data/BCMSnapAnnual90/ppt_90m.tif",
+                         "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                         "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                         "Data/BCMSnapAnnual90/tmn_90m.tif",
+                         "Data/BCMSnapAnnual90/tmndjf_90m.tif",
+                         "Data/BCMSnapAnnual90/tmx_90m.tif",
+                         "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                         "Data/fveg90/fvegHW90mask.tif")#,
+                         #"Data/BioDSnap90/bird90.tif",
+                         #"Data/BioDSnap90/mammal90.tif",
+                         #"Data/BioDSnap90/reptile90.tif")
+
+AET <- raster("Data/BCMSnapAnnual90/aet_90m.tif")
+envAnn <- mask(envAnnual, AET)
+envAnn$fvegHW90mask[envAnn$fvegHW90mask < 0] <- NA
+names(envAnn) <- c("aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmndjf", "tmx", "tmxjja", "fveg")
+
+
+Pres <- read.csv("Data/SWD/AnnOCCswda.csv")
+Pres <- Pres %>% 
+  group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup()
+
+Presence <- rep(1, nrow(Pres))
+
+colnames(Pres) <- c("x", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Pres$Back <- Presence
+
+Pres1<-Pres %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg, Back)
+
+#Pulling in the Background SWD
+
+Background <- read.csv("Data/SWD/AnnBackswd.csv")
+colnames(Background) <- c("x", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+
+Background <- Background %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg) %>% 
+  filter(fveg > 0)
+
+Backer <- rep(0, nrow(Background))
+
+Background$Back <- Backer
+
+SWD <- rbind(Background, Pres1)
+
+SWD1 <- SWD[complete.cases(SWD), ]
+
+```
+
+##Annual Model 2:  Options
+
+```{r}
+#Select Which Environmental Variables to use
+x <- SWD1 %>% 
+  select(aet, cwd, ppt, pptdjf, tmx, tmndjf, tmxjja, fveg)
+
+#Set which columns are Categorical
+x$fveg <- as.factor(x$fveg)
+
+#Set Arguments/Options to Pass to Maxent
+args <- c("-h", "-J", "-A", "-P", "replicates=5", "replicatetype=crossvalidate")
+
+#Set Path to Save Results
+path <- "Results/AnnualModel5_fitting_b"
+
+#Now run this part to finish up the data work:
+p <- SWD1 %>% 
+  select(Back)
+
+```
+
+
+##Annual Model 3:  Fitting
+
+```{r}
+AnnualFitting <- maxent(x,
+                         p,
+                         #nbg=nbg,
+                         #factors=factors,
+                         path=path,
+                         args=args,
+                         removeDuplicates = TRUE
+                         )
+
+
+save(AnnualFitting, file = "Results/AnnualModel5_fitting_b/Model.rData")
+```
+
+
+##Annual Model 4:  Creating a Final Model
+Here we are using what we found from the 5-kfold replicate fitting model to create a final model using 100% of occurance/background information.  Its all similar to the above fitting script just without the replicates.  The important part is to make sure the arguments match what the final fitted model settings should be and you exclude the argument for randomkfolding.
+
+Data Inputs remains the same (Use Annual Model 1:  Data Inputs code chunks if you are coming back to this later)
+
+```{r}
+#Final Model Settings
+#Select Predictors to use
+x <- SWD1 %>% 
+  select(aet, cwd, ppt, pptdjf, tmx, tmndjf, tmxjja, fveg)
+
+#Select which Predictors are Factors
+x$fveg <- as.factor(x$fveg)
+
+#Set Arguments/Options to Pass to Maxent
+args <- c("-h", "-J", "-A", "-P", "maximumiterations=100000", "writeplotdata=TRUE")
+
+#Set Path to Save Results
+path <- "Results/AnnualModel5Final_c"
+
+#Run this last bit to finalize options
+p <- SWD1 %>% 
+  select(Back)
+
+#Final Model Creation
+
+AnnualFinal <- maxent(x,
+                         p,
+                         #nbg=nbg,
+                         #factors=factors,
+                         path=path,
+                         args=args
+                         )
+
+save(AnnualFinal, file = "Results/AnnualModel5Final_c/Model.rData")
+
+```
+
+##Seasonal Model 1:  Data Inputs
+
+```{r}
+#Pulling In the Monthly SWD (Presence)
+
+Jan <- read.csv("Data/SWD/JanuaryOCC.csv")
+colnames(Jan) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+Jan <- Jan %>%
+  group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+Feb <- read.csv("Data/SWD/FebruaryOCC.csv")
+colnames(Feb) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+Feb <- Feb %>% 
+ group_by(longitude) %>% 
+ group_by(latitude) %>% 
+ distinct(longitude, latitude, .keep_all = TRUE) %>% 
+ ungroup() %>% 
+ select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+Mar <- read.csv("Data/SWD/MarchOCC.csv")
+colnames(Mar) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+Mar <- Mar %>% 
+ group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+Apr <- read.csv("Data/SWD/AprilOCC.csv")
+colnames(Apr) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+Apr <- Apr %>% 
+ group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+May <- read.csv("Data/SWD/MayOCC.csv")
+colnames(May) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+May <- May %>% 
+ group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+Jun <- read.csv("Data/SWD/JuneOCC.csv")
+colnames(Jun) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+Jun <- Jun %>% 
+ group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+Jul <- read.csv("Data/SWD/JulyOCC.csv")
+colnames(Jul) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+Jul <- Jul %>% 
+ group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+Aug <- read.csv("Data/SWD/AugustOCC.csv")
+colnames(Aug) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+Aug <- Aug %>% 
+ group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+Sep <- read.csv("Data/SWD/SeptemberOCC.csv")
+colnames(Sep) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+Sep <- Sep %>% 
+ group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+Oct <- read.csv("Data/SWD/OctoberOCC.csv")
+colnames(Oct) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+Oct <- Oct %>% 
+ group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+Nov <- read.csv("Data/SWD/NovemberOCC.csv")
+colnames(Nov) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+Nov <- Nov %>% 
+ group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+Dec <- read.csv("Data/SWD/DecemberOCC.csv")
+colnames(Dec) <- c("delete", "fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf", "longitude", "latitude")
+Dec <- Dec %>% 
+ group_by(longitude) %>% 
+  group_by(latitude) %>% 
+  distinct(longitude, latitude, .keep_all = TRUE) %>% 
+  ungroup() %>% 
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg)
+
+Pres <- rbind(Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec)
+Pres <- Pres %>% 
+  filter(fveg > 0)
+
+Presence <- rep(1, nrow(Pres))
+
+Pres$Back <- Presence
+
+write.csv(Pres, file = "Data/SWD/presSWD.csv")
+
+#Pulling in the Background SWD
+
+Background <- read.csv("Data/SWD/BackgroundSWD.csv")
+Background <- Background %>%
+  select(aet, cwd, ppt, pptdjf, pptjja, tmn, tmx, tmxjja, tmndjf, fveg) %>% 
+  filter(fveg > 0)
+
+Backer <- rep(0, nrow(Background))
+
+Background$Back <- Backer
+
+SWD <- rbind(Background, Pres)
+
+SWD <- SWD[complete.cases(SWD), ]
+
+```
+
+##Seasonal Model 2:  Model Settings
+
+```{r}
+
+#Select Predictors to use
+x <- SWD %>% 
+  select(aet, cwd, ppt, pptdjf, tmx, tmndjf, tmxjja, fveg)
+
+#Select which Predictors are Factors
+x$fveg <- as.factor(x$fveg)
+
+#Set Arguments/Options to Pass to Maxent
+args <- c("-h", "-J", "-A", "-P", "replicates=5", "replicatetype=crossvalidate")
+
+#Set Path to Save Results
+path <- "Results/18-09-06_Model5fitting_b"
+
+#Run this last bit to finalize options
+p <- SWD %>% 
+  select(Back)
+```
+
+##Seasonal Model 3:  Model Fitting
+
+```{r}
+SeasonalFitting <- maxent(x,
+                         p,
+                         #nbg=nbg,
+                         #factors=factors,
+                         path=path,
+                         args=args
+                         )
+
+save(SeasonalFitting, file = "Results/18-09-06_Model6fitting/model.RData")
+```
+
+
+##Seasonal Model 4:  Creating a Final Model
+Here we are using what we found from the 5-kfold replicate fitting model to create a final model using 100% of occurance/background information.  Its all similar to the above fitting script just without the replicates.  The important part is to make sure the arguments match what the final fitted model settings should be and you exclude the argument for randomkfolding.
+
+Data Inputs remains the same (Use Seasonal Model 1:  Data Inputs code chunks if you are coming back to this later)
+
+```{r}
+#Final Model Settings
+#Select Predictors to use
+x <- SWD %>% 
+  select(aet, cwd, ppt, pptdjf, tmx, tmndjf, tmxjja, fveg)
+
+#Select which Predictors are Factors
+x$fveg <- as.factor(x$fveg)
+
+#Set Arguments/Options to Pass to Maxent
+args <- c("-h", "-J", "-A", "-P", "maximumiterations=10000", "writeplotdata=TRUE")
+
+#Set Path to Save Results
+path <- "Results/SeasonalModel5_final_b"
+
+#Run this last bit to finalize options
+p <- SWD %>% 
+  select(Back)
+
+#Final Model Creation
+
+SeasonalFinal <- maxent(x,
+                         p,
+                         #nbg=nbg,
+                         #factors=factors,
+                         path=path,
+                         args=args
+                         )
+
+save(SeasonalFinal, file = "Results/SeasonalModel5_final_b/Model.rData")
+
+```
+
+
+##Predictions 1:  Annual Model
+Using a created maxent object.
+
+Note:  This script creates a temporary raster folder to store temp files used to create the objects.  This was done on my home PC because I did not have sufficient space on my C drive (where R is installed and where by default temp raster are creates).  You'll need to change that (or hash it out if not necessary) based on your own computer
+
+```{r}
+load("Results/AnnualModel5Final/Model.rData")
+
+rasterOptions(tmpdir="G:/RasterTemp")
+
+AnnEnv <- raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       #"Data/BioDSnap90/bird90.tif",
+                       #"Data/BioDSnap90/mammal90.tif",
+                       #"Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapAnnual90/aet_90m.tif",
+                       "Data/BCMSnapAnnual90/cwd_90m.tif",
+                       "Data/BCMSnapAnnual90/ppt_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmn_90m.tif",
+                       "Data/BCMSnapAnnual90/tmx_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapAnnual90/aet_90m.tif")
+AnnEnv <- mask(AnnEnv, aet)
+AnnEnv$fvegHW90mask[AnnEnv$fvegHW90mask < 0] <- NA
+names(AnnEnv) <- c("fveg", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+
+Pred_Annual <- predict(AnnualFinal, AnnEnv)
+
+#plot(JanPred_march)
+writeRaster(Pred_Annual, filename = "Results/AnnualModel5Final/Predictions/Annual.tif")
+
+png(filename = "Results/AnnualModel5Final/Predictions/Annual.png")
+plot(Pred_Annual)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+```
+
+##Predictions 2:  Seasonal Model
+
+Using a created maxent object.
+
+Note:  This script creates a temporary raster folder to store temp files used to create the objects.  This was done on my home PC because I did not have sufficient space on my C drive (where R is installed and where by default temp raster are creates).  You'll need to change that (or hash it out if not necessary) based on your own computer
+
+```{r}
+load("Results/Adults/SeasonalModel5_final_rep/Model.rdata")
+SeasonalFinal <- SeasonalFitting
+
+
+#January
+rasterOptions(tmpdir="G:/RasterTemp")
+
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetjan_90m.tif",
+                       "Data/BCMSnapMonth90/cwdjan_90m.tif",
+                       "Data/BCMSnapMonth90/pptjan_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnjan_90m.tif",
+                       "Data/BCMSnapMonth90/tmxjan_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetjan_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+JanPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(JanPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/01Jan.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG01Jan.png")
+plot(JanPred_m)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#February
+
+rasterOptions(tmpdir="G:/RasterTemp")
+
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetfeb_90m.tif",
+                       "Data/BCMSnapMonth90/cwdfeb_90m.tif",
+                       "Data/BCMSnapMonth90/pptfeb_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnfeb_90m.tif",
+                       "Data/BCMSnapMonth90/tmxfeb_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetfeb_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+MonthPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(MonthPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/02Feb.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG02Feb.png")
+plot(MonthPred_m)
+dev.off()
+
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#March
+
+rasterOptions(tmpdir="G:/RasterTemp")
+
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetmar_90m.tif",
+                       "Data/BCMSnapMonth90/cwdmar_90m.tif",
+                       "Data/BCMSnapMonth90/pptmar_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnmar_90m.tif",
+                       "Data/BCMSnapMonth90/tmxmar_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetmar_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+MonthPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(MonthPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/03Mar.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG03Mar.png")
+plot(MonthPred_m)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#April
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetapr_90m.tif",
+                       "Data/BCMSnapMonth90/cwdapr_90m.tif",
+                       "Data/BCMSnapMonth90/pptapr_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnapr_90m.tif",
+                       "Data/BCMSnapMonth90/tmxapr_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetapr_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+MonthPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(MonthPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/04Apr.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG04Apr.png")
+plot(MonthPred_m)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#May
+
+rasterOptions(tmpdir="G:/RasterTemp")
+
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetmay_90m.tif",
+                       "Data/BCMSnapMonth90/cwdmay_90m.tif",
+                       "Data/BCMSnapMonth90/pptmay_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnmay_90m.tif",
+                       "Data/BCMSnapMonth90/tmxmay_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetmay_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+MonthPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(MonthPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/05May.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG05May.png")
+plot(MonthPred_m)
+dev.off()
+
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#June
+
+rasterOptions(tmpdir="G:/RasterTemp")
+
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetjun_90m.tif",
+                       "Data/BCMSnapMonth90/cwdjun_90m.tif",
+                       "Data/BCMSnapMonth90/pptjun_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnjun_90m.tif",
+                       "Data/BCMSnapMonth90/tmxjun_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetjun_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+MonthPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(MonthPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/06Jun.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG06Jun.png")
+plot(MonthPred_m)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+
+#July
+
+rasterOptions(tmpdir="G:/RasterTemp")
+
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetjul_90m.tif",
+                       "Data/BCMSnapMonth90/cwdjul_90m.tif",
+                       "Data/BCMSnapMonth90/pptjul_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnjul_90m.tif",
+                       "Data/BCMSnapMonth90/tmxjul_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetjul_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+MonthPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(MonthPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/07Jul.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG07Jul.png")
+plot(MonthPred_m)
+dev.off()
+
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#August
+
+rasterOptions(tmpdir="G:/RasterTemp")
+
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetaug_90m.tif",
+                       "Data/BCMSnapMonth90/cwdaug_90m.tif",
+                       "Data/BCMSnapMonth90/pptaug_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnaug_90m.tif",
+                       "Data/BCMSnapMonth90/tmxaug_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetaug_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+MonthPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(MonthPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/08Aug.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG08Aug.png")
+plot(MonthPred_m)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#September
+
+rasterOptions(tmpdir="G:/RasterTemp")
+
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetsep_90m.tif",
+                       "Data/BCMSnapMonth90/cwdsep_90m.tif",
+                       "Data/BCMSnapMonth90/pptsep_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnsep_90m.tif",
+                       "Data/BCMSnapMonth90/tmxsep_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetsep_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+MonthPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(MonthPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/09Sep.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG09Sep.png")
+plot(MonthPred_m)
+dev.off()
+
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#October
+
+rasterOptions(tmpdir="G:/RasterTemp")
+
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetoct_90m.tif",
+                       "Data/BCMSnapMonth90/cwdoct_90m.tif",
+                       "Data/BCMSnapMonth90/pptoct_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnoct_90m.tif",
+                       "Data/BCMSnapMonth90/tmxoct_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetoct_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+MonthPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(MonthPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/10Oct.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG10Oct.png")
+plot(MonthPred_m)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#November
+
+rasterOptions(tmpdir="G:/RasterTemp")
+
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetnov_90m.tif",
+                       "Data/BCMSnapMonth90/cwdnov_90m.tif",
+                       "Data/BCMSnapMonth90/pptnov_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmnnov_90m.tif",
+                       "Data/BCMSnapMonth90/tmxnov_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetnov_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+MonthPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(MonthPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/11Nov.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG11Nov.png")
+plot(MonthPred_m)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#December
+
+rasterOptions(tmpdir="G:/RasterTemp")
+
+praster <-raster::stack("Data/fveg90/fvegHW90mask.tif",
+                       "Data/BioDSnap90/bird90.tif",
+                       "Data/BioDSnap90/mammal90.tif",
+                       "Data/BioDSnap90/reptile90.tif",
+                       "Data/BCMSnapMonth90/aetdec_90m.tif",
+                       "Data/BCMSnapMonth90/cwddec_90m.tif",
+                       "Data/BCMSnapMonth90/pptdec_90m.tif",
+                       "Data/BCMSnapAnnual90/pptdjf_90m.tif",
+                       "Data/BCMSnapAnnual90/pptjja_90m.tif",
+                       "Data/BCMSnapMonth90/tmndec_90m.tif",
+                       "Data/BCMSnapMonth90/tmxdec_90m.tif",
+                       "Data/BCMSnapAnnual90/tmxjja_90m.tif",
+                       "Data/BCMSnapAnnual90/tmndjf_90m.tif")
+
+aet <- raster("Data/BCMSnapMonth90/aetdec_90m.tif")
+praster2 <- mask(praster, aet)
+praster2$fvegHW90mask[praster2$fvegHW90mask < 0] <- NA
+names(praster2) <- c("fveg", "bird", "mammal", "reptile", "aet", "cwd", "ppt", "pptdjf", "pptjja", "tmn", "tmx", "tmxjja", "tmndjf")
+MonthPred_m <- predict(SeasonalFinal, praster2)
+writeRaster(MonthPred_m, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/12Dec.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/PNG12Dec.png")
+plot(MonthPred_m)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+
+#Average Rasters from Duplicates
+
+Jan2 <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/01Jan.tif")
+Jan3 <- mean(Jan2, na.rm = TRUE)
+
+#January
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/01Jan.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/01Jan.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG01Jan.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#February
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/02Feb.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/02Feb.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG02Feb.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+
+#March
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/03Mar.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/03Mar.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG03Mar.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#April
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/04Apr.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/04April.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG04April.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+
+#May
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/05May.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/05May.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG05May.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#June
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/06Jun.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/06June.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG06June.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#July
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/07Jul.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/07Jul.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG07Jul.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#August
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/08Aug.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/08Aug.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG08Aug.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+
+#September
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/09Sep.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/09Sep.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG09Sep.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+
+#October
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/10Oct.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/10Oct.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG10Oct.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+#November
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/11Nov.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/11Nov.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG11Nov.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+
+
+#Decem
+rasterOptions(tmpdir="G:/RasterTemp")
+MonthPred_m <- raster::stack("Results/Adults/SeasonalModel5_final_rep/Predictions/12Dec.tif")
+MonthPred_x <- mean(MonthPred_m, na.rm = TRUE)
+writeRaster(MonthPred_x, filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/12Dec.tif")
+
+png(filename = "Results/Adults/SeasonalModel5_final_rep/Predictions/Mean/PNG12Dec.png")
+plot(MonthPred_x)
+dev.off()
+
+remove <- normalizePath(list.files(path = "G:/RasterTemp", pattern=glob2rx("*.gri"), full.names = TRUE))
+
+file.remove(remove)
+```
+
+##Extracting data behind the response curves
+The script spits out response curves but it uses a default format that can look pretty ugly.  This is how I extract the variable response values and the predicted value for each variable.
+
+```{r}
+#Load the model you want to work with first.  Note that models may use additional or not all of the variables listed below.
+
+response <- response(SeasonalFinal, var = "aet")
+write.csv(response, file = "Results/SeasonalModel5_final/Response/aet.csv")
+
+response <- response(SeasonalFinal, var = "cwd")
+write.csv(response, file = "Results/SeasonalModel5_final/Response/cwd.csv")
+
+response <- response(SeasonalFinal, var = "fveg")
+write.csv(response, file = "Results/SeasonalModel5_final/Response/fveg.csv")
+
+response <- response(SeasonalFinal, var = "ppt")
+write.csv(response, file = "Results/SeasonalModel5_final/Response/ppt.csv")
+
+response <- response(SeasonalFinal, var = "pptdjf")
+write.csv(response, file = "Results/SeasonalModel5_final/Response/pptdjf.csv")
+
+response <- response(SeasonalFinal, var = "tmndjf")
+write.csv(response, file = "Results/SeasonalModel5_final/Response/tmndjf.csv")
+
+response <- response(SeasonalFinal, var = "tmx")
+write.csv(response, file = "Results/SeasonalModel5_final/Response/tmx.csv")
+
+response <- response(SeasonalFinal, var = "tmxjja")
+write.csv(response, file = "Results/SeasonalModel5_final/Response/tmxjja.csv")
+
+```
+
+##Creating Table for Occurence Points
+Extract all environmental variables for each Occurence point used in the model + County and Date of Occurance
+
+```{r}
+library(raster)
+library(ggplot2)
+library(rgdal)
+library(sp)
+library(sf)
+library(tidyverse)
+
+#Acquire shapefile of States +Counties
+California <- getData("GADM",country="USA",level=2)
+#Transform shape file to the same coordinate system as the environmnetal layers
+Cal1 <- spTransform(California, CRS("+proj=aea +lat_1=34 +lat_2=40.5 +lat_0=0 +lon_0=-120 +x_0=0 +y_0=-4000000 +datum=NAD83 +units=m +no_defs
++ellps=GRS80 +towgs84=0,0,0"))
+#Subset so we only are looking at California data
+Cal1 <- Cal1[Cal1$NAME_1 == "California", ]
+#Create a new blank raster that matches the specs of our environmental rasters
+CalR <- raster(nrows=11717, ncols=10156, xmn = -373976.1, xmx = 540063.9, ymn = -604512.6, ymx = 450017.4, crs = '+proj=aea +lat_1=34 +lat_2=40.5 +lat_0=0 +lon_0=-120 +x_0=0 +y_0=-4000000 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0')
+#
+extent(CalR) <- extent(Cal1)
+#Convert the county name to a number, ranked alphabetically
+Cal1$County <- rank(Cal1$NAME_2)
+#Convert the shapefile to a Raster displaying the county code
+CalR <- rasterize(Cal1, CalR, field="County", fun="first")
+#Stack all rasters
+EnvStack <- stack(CalR, praster)
+#Set names of Raster to appropriate identifiers
+names(EnvStack) <- c("County", "FVEG", "bird", "mammal", "reptile", "MonthlyAET", "MonthlyCWD", "MonthlyPPT", "PPTdjf", "PPTjja", "MonthlyTMN", "MonthlyTMX", "TMXjja", "TMNdjf")
+
+#Load Occurance Datapoints, choosing only Lat/Long for extractions
+MonthOcc <- read.csv("Data/CollectionData/Jan_Samples_MaxentSWD.csv")
+MonthOcc <- MonthOcc %>% 
+  select(longitude, latitude)
+
+#Extract data from Rasterstack
+MonthExtract <- raster::extract(EnvStack, MonthOcc, method='simple')
+MonthExtract <- as.data.frame(MonthExtract)
+
+#Add back in the Latt/Long (Can add back in Lifestage too if thats added)
+MonthExtract$longitude <- MonthOcc$longitude
+MonthExtract$latitude <- MonthOcc$latitude
+#Add column to list the month the occurance come from
+MonthExtract <- MonthExtract %>% 
+  mutate(Month="January")
+
+#Create a County-Code to Country-Name Dataframe for merging
+CalV <- as.data.frame(Cal1) %>% 
+  select(NAME_2, County)
+
+#Merge extract fiels with the county code-name dataframe to restore county name to data
+OccTable <- merge(x=MonthExtract,
+                  y=CalV,
+                  all.x=TRUE,
+                  by = "County")
+
+#Save the dataframe as a csv
+```
+
